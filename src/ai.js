@@ -53,18 +53,38 @@ Rules:
 
 Today's date: ${today}
 
-Return ONLY this JSON format:
+IMPORTANT: If the message contains MULTIPLE transactions (e.g. "lunch 500, auto 200, grocery 1200"), return a JSON ARRAY of objects. If single transaction, return a single JSON object.
+
+For MULTIPLE transactions return:
+[
+  {
+    "amount": 500,
+    "type": "expense",
+    "category": "Food & Dining",
+    "date": "${today}",
+    "note": "Lunch"
+  },
+  {
+    "amount": 200,
+    "type": "expense",
+    "category": "Transport",
+    "date": "${today}",
+    "note": "Auto rickshaw"
+  }
+]
+
+For SINGLE transaction return:
 {
   "amount": 500,
   "type": "expense",
   "category": "Food & Dining",
-  "date": "2026-03-23",
+  "date": "${today}",
   "note": "Lunch at restaurant"
 }`
           },
           { role: 'user', content: text }
         ],
-        max_tokens: 600,
+        max_tokens: 800,
         temperature: 0.1
       })
     })
@@ -76,11 +96,17 @@ Return ONLY this JSON format:
     if (!content) return null
 
     content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    const jsonMatch = content.match(/(\[[\s\S]*\]|\{[\s\S]*\})/)
     if (!jsonMatch) return null
 
     try {
       const result = JSON.parse(jsonMatch[0])
+      if (Array.isArray(result)) {
+        return result.map(item => {
+          if (item.note) item.note = item.note.charAt(0).toUpperCase() + item.note.slice(1)
+          return item
+        })
+      }
       if (result.note) {
         result.note = result.note.charAt(0).toUpperCase() + result.note.slice(1)
       }
@@ -90,7 +116,9 @@ Return ONLY this JSON format:
       const opens = (attempt.match(/\{/g) || []).length
       const closes = (attempt.match(/\}/g) || []).length
       attempt += '}'.repeat(Math.max(0, opens - closes))
-      return JSON.parse(attempt)
+      const result = JSON.parse(attempt)
+      if (result.note) result.note = result.note.charAt(0).toUpperCase() + result.note.slice(1)
+      return result
     }
   } catch (err) {
     console.error('Text parse error:', err.message)
@@ -121,8 +149,17 @@ Entertainment, Health, Education, Rent, Groceries,
 Personal Care, Salary, Freelance, Business, Investment,
 Gift, Other
 
-Rules:
-- amount: total amount as number, no currency symbols
+CRITICAL amount extraction rules:
+- amount: exact total as number, preserve decimals
+- ₹19.00 = 19, NOT 190 or 1900
+- ₹1,200 = 1200
+- ₹19.50 = 19.50
+- Never multiply or modify the amount
+- If amount has paise (decimal), keep as decimal number
+- Look for "Amount Paid", "Total", "Grand Total", "Net Amount" fields on receipt for the correct amount
+- Remove commas from amounts (₹1,200 → 1200) but keep decimal points (₹19.50 → 19.50)
+
+Other rules:
 - type: always "expense" for receipts
 - category: EXACTLY one from list above
 - date: YYYY-MM-DD format, use today if not visible
@@ -131,18 +168,28 @@ Rules:
 
 Today's date: ${today}
 
-Return ONLY this JSON format, no explanation, no markdown backticks:
+IMPORTANT: For most receipts (Jio recharge, restaurant bill, etc.) return the TOTAL as a SINGLE transaction object. Only return a JSON ARRAY of multiple objects if the receipt is clearly a multi-category bill (e.g. supermarket with different categories like food, household, personal care). Do NOT split a single-category grocery run into line items.
+
+For SINGLE item receipt return:
 {
   "amount": 1200,
   "type": "expense",
   "category": "Groceries",
-  "date": "2026-03-23",
+  "date": "${today}",
   "note": "Big Bazaar grocery shopping",
   "confidence": 0.95
-}` }
+}
+
+For MULTI-CATEGORY receipt return:
+[
+  { "amount": 150, "type": "expense", "category": "Groceries", "date": "${today}", "note": "Rice 5kg", "confidence": 0.9 },
+  { "amount": 80, "type": "expense", "category": "Personal Care", "date": "${today}", "note": "Shampoo", "confidence": 0.9 }
+]
+
+Return ONLY the JSON, no explanation, no markdown backticks.` }
             ]
           }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+          generationConfig: { temperature: 0.1, maxOutputTokens: 800 }
         })
       }
     )
@@ -153,10 +200,16 @@ Return ONLY this JSON format, no explanation, no markdown backticks:
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
     if (!content) return null
 
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    const jsonMatch = content.match(/(\[[\s\S]*\]|\{[\s\S]*\})/)
     if (!jsonMatch) return null
 
     const result = JSON.parse(jsonMatch[0])
+    if (Array.isArray(result)) {
+      return result.map(item => {
+        if (item.note) item.note = item.note.charAt(0).toUpperCase() + item.note.slice(1)
+        return item
+      })
+    }
     if (result.note) {
       result.note = result.note.charAt(0).toUpperCase() + result.note.slice(1)
     }
