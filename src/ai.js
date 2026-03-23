@@ -15,23 +15,52 @@ async function parseTextWithAI(text) {
         messages: [
           {
             role: 'system',
-            content: `You are a financial transaction parser for an Indian finance app. Extract transaction details from text (English, Hindi, or Bengali) and return ONLY valid JSON.
+            content: `You are a financial transaction parser for an Indian finance app. The user may write in ANY language (English, Hindi, Bengali, Tamil, Telugu, or any other). Always extract details and return output in ENGLISH only.
 
-Categories available:
-Expense: Food & Dining, Transport, Shopping, Bills & Utilities, Entertainment, Health, Education, Rent, Groceries, Personal Care, Other
-Income: Salary, Freelance, Business, Investment, Gift
+Extract transaction details and return ONLY valid JSON.
+No explanation, no markdown, no extra text.
 
-Return this exact JSON format:
-{
-  "amount": <number only, no currency symbols>,
-  "type": "income" or "expense",
-  "category": "<exact category name from list above>",
-  "note": "<brief description in English>",
-  "date": "<YYYY-MM-DD format, use today if not mentioned>"
-}
+Categories (use EXACTLY one):
+Food & Dining, Transport, Shopping, Bills & Utilities,
+Entertainment, Health, Education, Rent, Groceries,
+Personal Care, Salary, Freelance, Business, Investment,
+Gift, Other
+
+Smart category matching rules:
+- food, lunch, dinner, breakfast, restaurant, cafe, swiggy, zomato, dominos → Food & Dining
+- uber, ola, auto, rickshaw, petrol, diesel, bus, metro, train ticket → Transport
+- amazon, flipkart, shopping, clothes, shoes, mall → Shopping
+- electricity, water, internet, wifi, mobile bill, recharge, gas bill → Bills & Utilities
+- movie, netflix, spotify, game, concert → Entertainment
+- doctor, medicine, hospital, pharmacy, medical → Health
+- school, college, course, fees, books → Education
+- rent, house rent, apartment, pg → Rent
+- grocery, vegetables, fruits, kirana, supermarket → Groceries
+- salon, parlour, haircut, spa → Personal Care
+- salary, stipend, payment received → Salary
+- freelance, project payment, client → Freelance
+- business income, shop income → Business
+- mutual fund, stocks, fd, investment → Investment
+- gift, birthday, wedding gift → Gift
+
+Rules:
+- amount: number only, no currency symbols
+- type: "income" or "expense" only
+- category: EXACTLY one from list above
+- date: YYYY-MM-DD format, use today if not mentioned
+- note: brief description in ENGLISH, capitalize first letter
+- If text is in Hindi/Bengali/any language, translate the note to English
 
 Today's date: ${today}
-Return ONLY the JSON object, no explanation, no markdown.`
+
+Return ONLY this JSON format:
+{
+  "amount": 500,
+  "type": "expense",
+  "category": "Food & Dining",
+  "date": "2026-03-23",
+  "note": "Lunch at restaurant"
+}`
           },
           { role: 'user', content: text }
         ],
@@ -51,7 +80,11 @@ Return ONLY the JSON object, no explanation, no markdown.`
     if (!jsonMatch) return null
 
     try {
-      return JSON.parse(jsonMatch[0])
+      const result = JSON.parse(jsonMatch[0])
+      if (result.note) {
+        result.note = result.note.charAt(0).toUpperCase() + result.note.slice(1)
+      }
+      return result
     } catch(e) {
       let attempt = jsonMatch[0]
       const opens = (attempt.match(/\{/g) || []).length
@@ -78,15 +111,35 @@ async function parsePhotoWithAI(base64Image, mimeType = 'image/jpeg') {
           contents: [{
             parts: [
               { inline_data: { mime_type: mimeType, data: base64Image } },
-              { text: `Analyze this receipt or bill image and extract transaction details. Return ONLY valid JSON:
+              { text: `You are a receipt and document scanner for an Indian finance app. The receipt may be in ANY language. Always extract details and return output in ENGLISH only. Currency is INR (Indian Rupees ₹).
+
+Analyze this receipt/bill/document image carefully and extract transaction details.
+
+Categories (use EXACTLY one):
+Food & Dining, Transport, Shopping, Bills & Utilities,
+Entertainment, Health, Education, Rent, Groceries,
+Personal Care, Salary, Freelance, Business, Investment,
+Gift, Other
+
+Rules:
+- amount: total amount as number, no currency symbols
+- type: always "expense" for receipts
+- category: EXACTLY one from list above
+- date: YYYY-MM-DD format, use today if not visible
+- note: merchant name or brief description in ENGLISH, max 50 characters, capitalize first letter
+- confidence: 0.0 to 1.0 how confident you are
+
+Today's date: ${today}
+
+Return ONLY this JSON format, no explanation, no markdown backticks:
 {
-  "amount": <total amount as number, no currency symbols>,
+  "amount": 1200,
   "type": "expense",
-  "category": "<one of: Food & Dining, Transport, Shopping, Bills & Utilities, Entertainment, Health, Education, Groceries, Personal Care, Other>",
-  "note": "<merchant name or brief description, max 50 chars>",
-  "date": "<YYYY-MM-DD, use today ${today} if not visible>"
-}
-Return ONLY the JSON object, no explanation, no markdown.` }
+  "category": "Groceries",
+  "date": "2026-03-23",
+  "note": "Big Bazaar grocery shopping",
+  "confidence": 0.95
+}` }
             ]
           }],
           generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
@@ -103,7 +156,11 @@ Return ONLY the JSON object, no explanation, no markdown.` }
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return null
 
-    return JSON.parse(jsonMatch[0])
+    const result = JSON.parse(jsonMatch[0])
+    if (result.note) {
+      result.note = result.note.charAt(0).toUpperCase() + result.note.slice(1)
+    }
+    return result
   } catch (err) {
     console.error('Photo parse error:', err.message)
     return null
