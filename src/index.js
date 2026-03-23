@@ -1,8 +1,17 @@
 require('dotenv').config()
 const express = require('express')
-const { parseTextWithAI } = require('./ai')
-const { getUserByPhone, saveTransaction, getTransactions } = require('./db')
-const { sendMessage, sendButtons, markRead, formatINR } = require('./whatsapp')
+const { parseTextWithAI, parsePhotoWithAI, downloadWhatsAppMedia } = require('./ai')
+const {
+  getUserByPhone,
+  disconnectUser,
+  saveTransaction,
+  getTransactions,
+  getBalance,
+  getMonthlyBalance,
+  hasSeenWelcome,
+  markWelcomeSeen
+} = require('./db')
+const { sendMessage, sendImage, sendButtons, markRead, formatINR } = require('./whatsapp')
 const { getSession, setSession, clearSession } = require('./session')
 
 const app = express()
@@ -10,75 +19,66 @@ app.use(express.json())
 
 const PORT = process.env.PORT || 3000
 
-// ─── Startup env check ────────────────────────────────────────────────────────
-const required = ['WHATSAPP_TOKEN', 'WHATSAPP_PHONE_ID', 'WHATSAPP_VERIFY_TOKEN', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SARVAM_API_KEY']
+// ─── Image URLs ───────────────────────────────────────────────────────────────
+const BASE_URL = process.env.APP_URL || 'https://app.sadabmunshi.online'
+const WELCOME_IMAGE = `${BASE_URL}/finflow-logo.png`
+
+// ─── Startup check ────────────────────────────────────────────────────────────
+const required = ['WHATSAPP_TOKEN', 'WHATSAPP_PHONE_ID', 'WHATSAPP_VERIFY_TOKEN', 'SARVAM_API_KEY']
 for (const key of required) {
-  if (!process.env[key]) console.error(`[STARTUP] Missing env var: ${key}`)
+  if (!process.env[key]) console.error(`[STARTUP] Missing: ${key}`)
 }
 
-// ─── Health check ─────────────────────────────────────────────────────────────
+// ─── Health ───────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', bot: 'FinFlow WhatsApp Bot', time: new Date().toISOString() })
+  res.json({ status: 'ok', bot: 'FinFlow WhatsApp', time: new Date().toISOString() })
 })
 
-// ─── Webhook verification (Meta calls this once to verify) ────────────────────
+// ─── Webhook verify ───────────────────────────────────────────────────────────
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode']
   const token = req.query['hub.verify_token']
   const challenge = req.query['hub.challenge']
-
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log('[Webhook] Verified successfully')
     res.status(200).send(challenge)
   } else {
-    console.error('[Webhook] Verification failed')
     res.sendStatus(403)
   }
 })
 
-// ─── Webhook handler (Meta sends messages here) ───────────────────────────────
+// ─── Webhook handler ──────────────────────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
-  // Always respond 200 immediately to Meta
   res.sendStatus(200)
-
   try {
     const body = req.body
     if (body.object !== 'whatsapp_business_account') return
-
-    const entry = body.entry?.[0]
-    const changes = entry?.changes?.[0]
-    const value = changes?.value
-
+    const value = body.entry?.[0]?.changes?.[0]?.value
     if (!value?.messages) return
 
     const message = value.messages[0]
-    const from = message.from // sender's phone number
-    const messageId = message.id
+    const from = message.from
 
-    // Mark as read
-    await markRead(messageId)
+    await markRead(message.id)
 
-    // ── Handle button replies (confirm/cancel) ────────────────────────────────
+    // Button reply
     if (message.type === 'interactive') {
-      const buttonId = message.interactive?.button_reply?.id
-      await handleButtonReply(from, buttonId)
+      await handleButtonReply(from, message.interactive?.button_reply?.id)
       return
     }
 
-    // ── Handle text messages ──────────────────────────────────────────────────
+    // Photo/image
+    if (message.type === 'image') {
+      await handlePhotoMessage(from, message.image)
+      return
+    }
+
+    // Text
     if (message.type === 'text') {
-      const text = message.text.body.trim()
-      await handleTextMessage(from, text)
+      await handleTextMessage(from, message.text.body.trim())
       return
     }
 
-    // ── Unsupported message type ──────────────────────────────────────────────
-    await sendMessage(from,
-      'FinFlow only supports text messages for now.\n\n' +
-      'Just type your transaction like:\n' +
-      '"spent 500 on lunch"\n' +
-      '"received 50000 salary"'
-    )
+    await sendMessage(from, '📝 Please send a text message or photo receipt.')
 
   } catch (err) {
     console.error('[Webhook Error]', err.message)
@@ -87,51 +87,210 @@ app.post('/webhook', async (req, res) => {
 
 // ─── Handle text messages ─────────────────────────────────────────────────────
 async function handleTextMessage(from, text) {
-  // Check if user is connected
+  const lower = text.toLowerCase().trim()
   const user = await getUserByPhone(from)
 
+  // ── Not connected ─────────────────────────────────────────────────────────
   if (!user) {
+    const firstTime = !hasSeenWelcome(from)
+    if (firstTime) {
+      markWelcomeSeen(from)
+      try {
+        await sendImage(from, WELCOME_IMAGE,
+          `👋 Welcome to *FinFlow*\nYour personal finance assistant`
+        )
+        await new Promise(r => setTimeout(r, 800))
+      } catch (e) {
+        // Image failed, continue with text
+      }
+    }
     await sendMessage(from,
-      'Welcome to *FinFlow* 👋\n\n' +
-      'Your WhatsApp is not linked yet.\n\n' +
-      'To connect:\n' +
-      '1. Open FinFlow app\n' +
-      '2. Go to Settings → Connect WhatsApp\n' +
-      '3. Enter your number: *+' + from + '*'
+      `*Account not linked* 🔗\n\n` +
+      `To connect your FinFlow account:\n` +
+      `1️⃣  Open the FinFlow app\n` +
+      `2️⃣  Settings → Connect WhatsApp\n` +
+      `3️⃣  Enter your number: *+${from}*`
     )
     return
   }
 
-  // Parse transaction with AI
-  await sendMessage(from, '⏳ Processing...')
+  // ── Commands ──────────────────────────────────────────────────────────────
 
+  // Help
+  if (lower === 'help' || lower === '/help') {
+    await sendMessage(from,
+      `*FinFlow Bot* — Help\n` +
+      `──────────────────\n\n` +
+      `*Add a transaction:*\n` +
+      `Just type naturally 💬\n` +
+      `_"spent 500 on lunch"_\n` +
+      `_"received 50000 salary"_\n` +
+      `_"Kal 3000 ki grocery li"_\n\n` +
+      `📷 Or send a *receipt photo*\n\n` +
+      `*Commands:*\n` +
+      `• balance — All time summary\n` +
+      `• monthly — This month\n` +
+      `• recent — Last 5 transactions\n` +
+      `• disconnect — Unlink account\n` +
+      `• help — This message\n\n` +
+      `_Supports English, Hindi & Bengali_`
+    )
+    return
+  }
+
+  // Balance
+  if (lower === 'balance' || lower === 'check my balance' || lower === '/balance') {
+    const b = getBalance(user.user_id)
+    const savingsRate = b.income > 0
+      ? Math.round(((b.income - b.expense) / b.income) * 100)
+      : 0
+    await sendMessage(from,
+      `💰 *Balance Summary*\n` +
+      `──────────────────\n` +
+      `🟢  Income:   *${formatINR(b.income)}*\n` +
+      `🔴  Expense:  *${formatINR(b.expense)}*\n` +
+      `🏦  Balance:  *${formatINR(b.balance)}*\n` +
+      `📈  Savings:  ${savingsRate}%\n` +
+      `──────────────────\n` +
+      `_All time summary_`
+    )
+    return
+  }
+
+  // Monthly
+  if (lower === 'monthly' || lower === '/monthly') {
+    const m = getMonthlyBalance(user.user_id)
+    const month = new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' })
+    const savingsRate = m.income > 0
+      ? Math.round(((m.income - m.expense) / m.income) * 100)
+      : 0
+    await sendMessage(from,
+      `📅 *${month}*\n` +
+      `──────────────────\n` +
+      `🟢  Income:   *${formatINR(m.income)}*\n` +
+      `🔴  Expense:  *${formatINR(m.expense)}*\n` +
+      `🏦  Balance:  *${formatINR(m.balance)}*\n` +
+      `📈  Savings:  ${savingsRate}%\n` +
+      `──────────────────`
+    )
+    return
+  }
+
+  // Recent
+  if (lower === 'recent' || lower === '/recent' || lower === 'add a transaction' && false) {
+    const txs = getTransactions(user.user_id)
+    if (!txs.length) {
+      await sendMessage(from, '📭 No transactions yet.\n\nType something like _"spent 500 on lunch"_ to add one.')
+      return
+    }
+    const list = txs.map(t => {
+      const emoji = t.type === 'income' ? '🟢' : '🔴'
+      return `${emoji}  *${formatINR(t.amount)}*  ${t.category}\n    📝 ${t.note || '—'}  ·  📅 ${t.date}`
+    }).join('\n\n')
+
+    await sendMessage(from,
+      `📋 *Recent Transactions*\n` +
+      `──────────────────\n\n` +
+      `${list}\n\n` +
+      `──────────────────\n` +
+      `_Showing last ${txs.length} transactions_`
+    )
+    return
+  }
+
+  // Disconnect
+  if (lower === 'disconnect' || lower === '/disconnect') {
+    await sendButtons(from,
+      `⚠️ *Disconnect Account?*\n\n` +
+      `This will unlink your WhatsApp from FinFlow.\n` +
+      `Your data will remain safe in the app.`,
+      [
+        { id: 'confirm_disconnect', title: '✅ Yes, disconnect' },
+        { id: 'cancel', title: '❌ Cancel' }
+      ]
+    )
+    return
+  }
+
+  // "Add a transaction" icebreaker tap
+  if (lower === 'add a transaction') {
+    await sendMessage(from,
+      `✏️ *Add a Transaction*\n\n` +
+      `Just type naturally:\n\n` +
+      `💬  _"spent 500 on lunch"_\n` +
+      `💬  _"received 50000 salary"_\n` +
+      `💬  _"paid 1200 electricity"_\n\n` +
+      `Or send a 📷 *receipt photo*`
+    )
+    return
+  }
+
+  // ── Parse as transaction ──────────────────────────────────────────────────
+  await sendMessage(from, '⏳ _Processing..._')
   const parsed = await parseTextWithAI(text)
 
   if (!parsed || !parsed.amount) {
     await sendMessage(from,
-      '❌ Could not understand that.\n\n' +
-      'Try:\n' +
-      '• "spent 500 on lunch"\n' +
-      '• "received 50000 salary"\n' +
-      '• "paid 1200 electricity bill"'
+      `❌ *Couldn't understand that*\n\n` +
+      `Try:\n` +
+      `• _"spent 500 on lunch"_\n` +
+      `• _"received 50000 salary"_\n\n` +
+      `Type *help* for all commands`
     )
     return
   }
 
-  // Store in session and show preview with buttons
-  setSession(from, { pending: parsed, userId: user.user_id, timestamp: Date.now() })
+  await showTransactionPreview(from, parsed, user.user_id)
+}
 
+// ─── Handle photo messages ────────────────────────────────────────────────────
+async function handlePhotoMessage(from, image) {
+  const user = await getUserByPhone(from)
+  if (!user) {
+    await sendMessage(from, '🔗 Please link your account first. Type *help* for instructions.')
+    return
+  }
+
+  await sendMessage(from, '🔍 _Scanning your receipt..._')
+
+  const fileData = await downloadWhatsAppMedia(image.id)
+  if (!fileData) {
+    await sendMessage(from, '❌ Could not download image. Please try again.')
+    return
+  }
+
+  const parsed = await parsePhotoWithAI(fileData.base64, fileData.mimeType)
+
+  if (!parsed || !parsed.amount) {
+    await sendMessage(from,
+      `❌ *Could not read receipt*\n\n` +
+      `Make sure:\n` +
+      `• Receipt is clear and well-lit\n` +
+      `• Text is readable\n\n` +
+      `Or type the transaction manually`
+    )
+    return
+  }
+
+  await showTransactionPreview(from, parsed, user.user_id)
+}
+
+// ─── Show transaction preview with confirm/cancel ─────────────────────────────
+async function showTransactionPreview(from, parsed, userId) {
+  setSession(from, { pending: parsed, userId, timestamp: Date.now() })
+
+  const typeEmoji = parsed.type === 'income' ? '🟢' : '🔴'
   const typeLabel = parsed.type === 'income' ? 'Income' : 'Expense'
+
   const preview =
-    `*Transaction Preview*\n` +
+    `${typeEmoji} *Transaction Preview*\n` +
     `──────────────────\n` +
-    `Amount:    ${formatINR(parsed.amount)}\n` +
-    `Type:      ${typeLabel}\n` +
-    `Category:  ${parsed.category}\n` +
-    `Date:      ${parsed.date}\n` +
-    `Note:      ${parsed.note || '—'}\n` +
+    `*${formatINR(parsed.amount)}*  ·  ${typeLabel}\n` +
+    `📂  ${parsed.category}\n` +
+    `📅  ${parsed.date}\n` +
+    `📝  ${parsed.note || '—'}\n` +
     `──────────────────\n` +
-    `Is this correct?`
+    `Confirm to save?`
 
   await sendButtons(from, preview, [
     { id: 'confirm_save', title: '✅ Save' },
@@ -143,40 +302,51 @@ async function handleTextMessage(from, text) {
 async function handleButtonReply(from, buttonId) {
   const session = getSession(from)
 
+  // Save transaction
   if (buttonId === 'confirm_save') {
     if (!session.pending) {
-      await sendMessage(from, 'Session expired. Please send your transaction again.')
+      await sendMessage(from, '⚠️ Session expired. Please send your transaction again.')
       return
     }
-
-    const { data, error } = await saveTransaction(session.userId, session.pending)
-
+    const { error } = await saveTransaction(session.userId, session.pending)
     if (error) {
       await sendMessage(from, '❌ Failed to save. Please try again.')
       return
     }
-
-    clearSession(from)
-
     const p = session.pending
+    clearSession(from)
+    const typeEmoji = p.type === 'income' ? '🟢' : '🔴'
     const typeLabel = p.type === 'income' ? 'Income' : 'Expense'
-
     await sendMessage(from,
-      `✅ *Transaction Saved*\n` +
+      `✅ *Saved to FinFlow*\n` +
       `──────────────────\n` +
-      `${formatINR(p.amount)} — ${p.category}\n` +
-      `${typeLabel}  ·  ${p.date}\n` +
-      `Note: ${p.note || '—'}\n` +
+      `${typeEmoji}  *${formatINR(p.amount)}*\n` +
+      `📂  ${p.category}  ·  ${typeLabel}\n` +
+      `📅  ${p.date}\n` +
+      `📝  ${p.note || '—'}\n` +
       `──────────────────\n` +
-      `Added to FinFlow`
+      `_Open the app to view all transactions_`
     )
-
     return
   }
 
+  // Disconnect confirm
+  if (buttonId === 'confirm_disconnect') {
+    disconnectUser(from)
+    clearSession(from)
+    await sendMessage(from,
+      `✅ *Account Disconnected*\n\n` +
+      `Your WhatsApp has been unlinked from FinFlow.\n` +
+      `Your data is safe in the app.\n\n` +
+      `To reconnect, go to FinFlow app → Settings → Connect WhatsApp`
+    )
+    return
+  }
+
+  // Cancel
   if (buttonId === 'cancel') {
     clearSession(from)
-    await sendMessage(from, 'Cancelled. Send a transaction to try again.')
+    await sendMessage(from, "↩️ Cancelled. Send a transaction whenever you're ready.")
     return
   }
 }

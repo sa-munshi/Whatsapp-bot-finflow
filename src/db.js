@@ -27,17 +27,35 @@ function saveAll(data) {
 }
 
 // ─── TEST USERS ───────────────────────────────────────────────────────────────
-// Add your WhatsApp number here (no + or spaces)
-// "+91 90469 39869" → "919046939869"
+// phone → { name, connected }
 const TEST_USERS = {
-  "919046939869": "Sadab",
-  "917407486131": "Sadab"  // ← add this line
+  "919046939869": { name: "Sadab", connected: true }
+  // add more: "91xxxxxxxxxx": { name: "Name", connected: true }
 }
+
 // Get user by phone
 function getUserByPhone(phone) {
-  const name = TEST_USERS[phone]
-  if (!name) return null
-  return { user_id: phone, name }
+  const user = TEST_USERS[phone]
+  if (!user || !user.connected) return null
+  return { user_id: phone, name: user.name }
+}
+
+// Disconnect user
+function disconnectUser(phone) {
+  if (TEST_USERS[phone]) {
+    TEST_USERS[phone].connected = false
+    return true
+  }
+  return false
+}
+
+// Reconnect user (for testing)
+function reconnectUser(phone) {
+  if (TEST_USERS[phone]) {
+    TEST_USERS[phone].connected = true
+    return true
+  }
+  return false
 }
 
 // Save transaction locally
@@ -72,5 +90,45 @@ function getTransactions(userId) {
   return (all[userId] || []).slice(-5).reverse()
 }
 
-module.exports = { getUserByPhone, saveTransaction, getTransactions }
+// Get balance summary
+function getBalance(userId) {
+  const all = loadAll()
+  const txs = all[userId] || []
+  const income = txs.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0)
+  const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0)
+  return { income, expense, balance: income - expense }
+}
 
+// Get this month's balance
+function getMonthlyBalance(userId) {
+  const all = loadAll()
+  const txs = all[userId] || []
+  const month = new Date().toISOString().slice(0, 7)
+  const monthTxs = txs.filter(t => t.date && t.date.startsWith(month))
+  const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0)
+  const expense = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0)
+  return { income, expense, balance: income - expense }
+}
+
+// ─── Welcome seen tracker (in-memory) ────────────────────────────────────────
+const welcomeSeen = new Set()
+
+function hasSeenWelcome(phone) {
+  return welcomeSeen.has(phone)
+}
+
+function markWelcomeSeen(phone) {
+  welcomeSeen.add(phone)
+}
+
+module.exports = {
+  getUserByPhone,
+  disconnectUser,
+  reconnectUser,
+  saveTransaction,
+  getTransactions,
+  getBalance,
+  getMonthlyBalance,
+  hasSeenWelcome,
+  markWelcomeSeen
+}
