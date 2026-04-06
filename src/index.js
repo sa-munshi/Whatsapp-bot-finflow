@@ -12,6 +12,7 @@ const {
   getBalance,
   getMonthlyBalance,
   getReportSignedUrl,
+  getISTMonthPrefix,
   hasSeenWelcome,
   markWelcomeSeen
 } = require('./db')
@@ -258,10 +259,7 @@ async function handleTextMessage(from, text) {
 
   // Report
   if (lower === 'report' || lower === '/report') {
-    const now = new Date()
-    const yyyy = now.getUTCFullYear()
-    const mm = String(now.getUTCMonth() + 1).padStart(2, '0')
-    const monthLabel = `${yyyy}-${mm}`
+    const monthLabel = getISTMonthPrefix()
     const fileName = `${monthLabel}.pdf`
 
     const signedUrl = await getReportSignedUrl(user.user_id, fileName)

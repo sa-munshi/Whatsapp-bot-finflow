@@ -269,6 +269,7 @@ module.exports = {
   getBalance,
   getMonthlyBalance,
   getReportSignedUrl,
+  getISTMonthPrefix,
   hasSeenWelcome,
   markWelcomeSeen
 }
