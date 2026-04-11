@@ -15,7 +15,9 @@ const {
   getISTMonthPrefix,
   getPreviousISTMonthPrefix,
   hasSeenWelcome,
-  markWelcomeSeen
+  markWelcomeSeen,
+  markBotDisconnect,
+  subscribeToDisconnections
 } = require('./db')
 const { sendMessage, sendImage, sendDocument, sendButtons, markRead, formatINR } = require('./whatsapp')
 const {
@@ -651,6 +653,7 @@ async function handleButtonReply(from, buttonId) {
 
   // Disconnect confirm
   if (buttonId === 'confirm_disconnect') {
+    markBotDisconnect(from)
     await disconnectUser(from)
     clearSession(from)
     await sendMessage(from,
@@ -704,4 +707,20 @@ app.post('/send-notification', async (req, res) => {
 // ─── Start server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 FinFlow WhatsApp Bot running on port ${PORT}`)
+
+  // Watch for app-side disconnections via Supabase Realtime
+  subscribeToDisconnections(async (phone) => {
+    try {
+      await sendMessage(phone,
+        `🔗 *Account Disconnected*\n` +
+        `──────────────────\n` +
+        `Your WhatsApp has been unlinked from FinFlow.\n` +
+        `Your data is safe in the app.\n` +
+        `To reconnect: Settings → Connect WhatsApp\n` +
+        `──────────────────`
+      )
+    } catch (err) {
+      console.error('[Realtime] Failed to send disconnect notification:', err.message)
+    }
+  })
 })
