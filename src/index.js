@@ -558,12 +558,13 @@ async function showTransactionPreview(from, parsed, userId) {
 
 // ─── Trigger budget alert (non-blocking) ──────────────────────────────────────
 async function triggerBudgetAlert(userId) {
+  console.log('[Budget Alert] Firing for userId:', userId, 'apiUrl:', process.env.FINFLOW_API_URL)
   try {
     const apiUrl = process.env.FINFLOW_API_URL
     const secret = process.env.WEBHOOK_SECRET
     if (!apiUrl || !secret) return
 
-    await fetch(`${apiUrl}/api/notifications/budget-alert`, {
+    const response = await fetch(`${apiUrl}/api/notifications/budget-alert`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -571,8 +572,9 @@ async function triggerBudgetAlert(userId) {
       },
       body: JSON.stringify({ user_id: userId })
     })
+    console.log('[Budget Alert] Response status:', response.status)
   } catch (err) {
-    console.error('[Budget Alert Error]', err.message)
+    console.error('[Budget Alert Error] Full error:', err)
   }
 }
 
