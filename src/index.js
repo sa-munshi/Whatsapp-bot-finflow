@@ -287,7 +287,7 @@ async function handleTextMessage(from, text) {
     }
     const list = txs.map(t => {
       const emoji = t.type === 'income' ? '🟢' : '🔴'
-      return `${emoji}  *${formatINR(t.amount)}*  ${t.category}\n    📝 ${t.note || '—'}  ·  🗓️ ${t.date}`
+      return `${emoji}  *${formatINR(t.amount)}*  ${t.category}\n📝 ${t.note || '—'}\n🗓️ ${t.date}`
     }).join('\n\n')
 
     await sendMessage(from,
