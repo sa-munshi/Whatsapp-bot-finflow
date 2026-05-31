@@ -32,7 +32,7 @@ const PORT = process.env.PORT || 3000
 
 // ─── Image URLs ───────────────────────────────────────────────────────────────
 const BASE_URL = process.env.APP_URL || 'https://app.sadabmunshi.online'
-const WELCOME_IMAGE = `${BASE_URL}/finflow-logo.png`
+const WELCOME_IMAGE = `${BASE_URL}/WhatsApp-welcome.png`
 
 // ─── Startup check ────────────────────────────────────────────────────────────
 const required = [
@@ -44,6 +44,7 @@ const required = [
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
   'APP_URL',
+  'FINFLOW_API_URL',
   'WEBHOOK_SECRET'
 ]
 for (const key of required) {
@@ -286,7 +287,7 @@ async function handleTextMessage(from, text) {
     }
     const list = txs.map(t => {
       const emoji = t.type === 'income' ? '🟢' : '🔴'
-      return `${emoji}  *${formatINR(t.amount)}*  ${t.category}\n    📝 ${t.note || '—'}  ·  📅 ${t.date}`
+      return `${emoji}  *${formatINR(t.amount)}*  ${t.category}\n    📝 ${t.note || '—'}  ·  🗓️ ${t.date}`
     }).join('\n\n')
 
     await sendMessage(from,
@@ -448,7 +449,7 @@ async function saveAndConfirm(from, parsed, userId) {
       `──────────────────\n` +
       `${typeEmoji}  *${formatINR(parsed.amount)}*\n` +
       `📂  ${parsed.category}  ·  ${typeLabel}\n` +
-      `📅  ${parsed.date}\n` +
+      `🗓️  ${parsed.date}\n` +
       `📝  ${parsed.note || '—'}\n` +
       `──────────────────\n` +
       `_Open the app to view all transactions_`
@@ -544,7 +545,7 @@ async function showTransactionPreview(from, parsed, userId) {
     `💵  *${formatINR(parsed.amount)}*\n` +
     `📊  ${typeLabel}\n` +
     `📂  ${parsed.category}\n` +
-    `📅  ${parsed.date}\n` +
+    `🗓️  ${parsed.date}\n` +
     `📝  ${parsed.note || '—'}\n` +
     `──────────────────\n` +
     `Confirm to save?`
@@ -558,11 +559,11 @@ async function showTransactionPreview(from, parsed, userId) {
 // ─── Trigger budget alert (non-blocking) ──────────────────────────────────────
 async function triggerBudgetAlert(userId) {
   try {
-    const appUrl = process.env.APP_URL
+    const apiUrl = process.env.FINFLOW_API_URL
     const secret = process.env.WEBHOOK_SECRET
-    if (!appUrl || !secret) return
+    if (!apiUrl || !secret) return
 
-    await fetch(`${appUrl}/api/notifications/budget-alert`, {
+    await fetch(`${apiUrl}/api/notifications/budget-alert`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -635,7 +636,7 @@ async function handleButtonReply(from, buttonId) {
       `──────────────────\n` +
       `${typeEmoji}  *${formatINR(p.amount)}*\n` +
       `📂  ${p.category}  ·  ${typeLabel}\n` +
-      `📅  ${p.date}\n` +
+      `🗓️  ${p.date}\n` +
       `📝  ${p.note || '—'}\n` +
       `──────────────────\n` +
       `_Open the app to view all transactions_`
